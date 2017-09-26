@@ -105,8 +105,7 @@ export async function server({ token, rootAsset, season }) {
 
 export async function assets({ token, rootAsset, season }) {
   if (!token) {
-    throw 'No token provided'
-    return
+    throw 'No token provided';
   }
 
   const user = await currentUser({ token });

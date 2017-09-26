@@ -59,7 +59,6 @@ app.get('/graphql/schema', (req, res) => {
   res.type('text/plain').send(printSchema(schema));
 });
 
-
 app.use(
   '/graphql',
   expressGraphQL(req => ({

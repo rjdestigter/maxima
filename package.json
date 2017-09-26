@@ -75,7 +75,6 @@
     "*.{json,gyp}": ["prettier --parser json --write", "git add --force"]
   },
   "scripts": {
-    "precommit": "lint-staged",
     "lint": "eslint --ignore-path .gitignore --ignore-pattern \"!**/.*\" .",
     "fix":
       "eslint --ignore-path .gitignore --ignore-pattern \"!**/.*\" --fix .",

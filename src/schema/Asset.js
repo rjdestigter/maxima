@@ -51,8 +51,8 @@ export const assets = {
 
       return data;
     } catch (error) {
-      console.log(error)
-      throw error
+      console.log(error);
+      throw error;
     }
   },
 };
