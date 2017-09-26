@@ -1,0 +1,36 @@
+version: '3'
+
+services:
+
+  # Data API and authentication/authorization
+  api:
+    build:
+      context: ./
+      dockerfile: Dockerfile.dev
+    hostname: api
+    depends_on:
+      - redis
+    environment:
+      - CORS_ORIGIN=http://localhost:3000,http://localhost:3001
+      - REDIS_URL=redis://redis:6379/0
+      - SESSION_SECRET=wZjwhFtzQsd7r87W6AZw45Sm
+    ports:
+      - "8080:8080"
+      - "127.0.0.1:9229:9229" # V8 inspector for tools/run.js
+      - "127.0.0.1:9230:9230" # V8 inspector for src/server.js
+    volumes:
+      - yarn:/home/node/.cache/yarn
+      - ./:/usr/src/app
+    command: node tools/run.js # or, `node --inspect=0.0.0.0:9229 tools/run.js`
+
+  # Distributed in-memory cache
+  redis:
+    image: redis:4.0.1-alpine
+    read_only: true
+    volumes:
+      - redis:/data
+    user: redis
+
+volumes:
+  redis:
+  yarn:
