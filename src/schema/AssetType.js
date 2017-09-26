@@ -15,17 +15,25 @@ import {
   GraphQLInt,
   GraphQLString,
 } from 'graphql';
-import { globalIdField } from 'graphql-relay';
-import { nodeInterface } from './Node';
+
+export const ShapeType = new GraphQLObjectType({
+  name: 'Shape',
+
+  fields: {
+    id: { type: GraphQLInt },
+    asset: { type: GraphQLInt },
+    shapeData: { type: new GraphQLNonNull(GraphQLString) },
+  },
+});
 
 export default new GraphQLObjectType({
   name: 'Asset',
-  interfaces: [nodeInterface],
 
   fields: {
-    id: globalIdField(),
+    id: { type: GraphQLInt },
     label: { type: new GraphQLNonNull(GraphQLString) },
     category: { type: new GraphQLNonNull(GraphQLString) },
     parent: { type: GraphQLInt },
+    shape: { type: ShapeType },
   },
 });

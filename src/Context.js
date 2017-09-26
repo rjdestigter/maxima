@@ -22,6 +22,10 @@ class Context {
     this.request = request;
   }
 
+  token() {
+    return this.request.header('Authorization');
+  }
+
   /*
    * Data loaders to be used with GraphQL resolve() functions. For example:
    *

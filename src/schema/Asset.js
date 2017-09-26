@@ -10,46 +10,50 @@
 /* @flow */
 
 import validator from 'validator';
-import fetch from 'node-fetch';
-import { GraphQLNonNull, GraphQLID, GraphQLString, GraphQLInt } from 'graphql';
 import {
-  fromGlobalId,
-  connectionDefinitions,
-  forwardConnectionArgs,
-  connectionFromArraySlice,
-  cursorToOffset,
-  mutationWithClientMutationId,
-} from 'graphql-relay';
+  GraphQLNonNull,
+  GraphQLID,
+  GraphQLString,
+  GraphQLList,
+  GraphQLInt,
+  GraphQLBoolean,
+} from 'graphql';
+import { mutationWithClientMutationId } from 'graphql-relay';
 
 import AssetType from './AssetType';
 import ValidationError from './ValidationError';
 import * as Assets from '../models/assets';
 
 export const assets = {
-  type: connectionDefinitions({
-    name: 'Asset',
-    nodeType: AssetType,
-    connectionFields: {
-      totalCount: { type: new GraphQLNonNull(GraphQLInt) },
+  type: new GraphQLList(AssetType),
+  // args: forwardConnectionArgs,
+  args: {
+    rootAsset: {
+      type: GraphQLInt,
     },
-  }).connectionType,
-  args: forwardConnectionArgs,
-  async resolve(root, args) {
-    const limit = typeof args.first === 'undefined' ? '10' : args.first;
-    const offset = args.after ? cursorToOffset(args.after) + 1 : 0;
+    season: {
+      type: GraphQLInt,
+    },
+    toFarmsOnly: {
+      type: GraphQLBoolean,
+    },
+    token: {
+      type: GraphQLString,
+    },
+  },
+  async resolve(root, args, context) {
+    try {
+      const rows = await Assets.assets({
+        ...args,
+        token: context.token() || args.token,
+      });
+      const data = rows.map(x => Object.assign(x, { __type: 'Asset' }));
 
-    const assets = await Assets.server();
-    const data = assets.map(x => Object.assign(x, { __type: 'Asset' }));
-
-    const totalCount = data.length;
-
-    return {
-      ...connectionFromArraySlice(data, args, {
-        sliceStart: offset,
-        arrayLength: totalCount,
-      }),
-      totalCount,
-    };
+      return data;
+    } catch (error) {
+      console.log(error)
+      throw error
+    }
   },
 };
 

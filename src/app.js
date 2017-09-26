@@ -34,7 +34,7 @@ app.use(
       const whitelist = process.env.CORS_ORIGIN
         ? process.env.CORS_ORIGIN.split(',')
         : [];
-      cb(null, whitelist.includes(origin));
+      cb(null, [...whitelist, 'http://10.55.0.184:8050'].includes(origin));
     },
     credentials: true,
   }),
@@ -58,6 +58,7 @@ app.use(flash());
 app.get('/graphql/schema', (req, res) => {
   res.type('text/plain').send(printSchema(schema));
 });
+
 
 app.use(
   '/graphql',
