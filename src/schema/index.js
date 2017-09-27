@@ -13,6 +13,7 @@ import { GraphQLSchema, GraphQLObjectType } from 'graphql';
 
 import { node, nodes } from './Node';
 import { assets, createAsset, updateAsset } from './Asset';
+import hybrids from './Hybrid'
 
 export default new GraphQLSchema({
   query: new GraphQLObjectType({
@@ -21,6 +22,7 @@ export default new GraphQLSchema({
       node,
       nodes,
       assets,
+      hybrids,
     },
   }),
   mutation: new GraphQLObjectType({

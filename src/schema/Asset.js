@@ -17,12 +17,23 @@ import {
   GraphQLList,
   GraphQLInt,
   GraphQLBoolean,
+  GraphQLEnumType,
 } from 'graphql';
 import { mutationWithClientMutationId } from 'graphql-relay';
 
 import AssetType from './AssetType';
 import ValidationError from './ValidationError';
 import * as Assets from '../models/assets';
+
+const REGION = 'Region';
+const HUB = 'Hub';
+const TERRITORY = 'Territory';
+const REPRESENTATIVE = 'Representative';
+const GROWER = 'Grower';
+const SALES_OFFICE = 'Sales Office';
+const FARM = 'Farm';
+const FIELD = 'Field';
+const MANAGEMENT_ZONES = 'Management Zones';
 
 export const assets = {
   type: new GraphQLList(AssetType),
@@ -36,6 +47,25 @@ export const assets = {
     },
     toFarmsOnly: {
       type: GraphQLBoolean,
+    },
+    shape: {
+      type: GraphQLBoolean,
+    },
+    category: {
+      type: new GraphQLEnumType({
+        name: 'Category',
+        values: {
+          REGION: { value: REGION },
+          HUB: { value: HUB },
+          TERRITORY: { value: TERRITORY },
+          REPRESENTATIVE: { value: REPRESENTATIVE },
+          GROWER: { value: GROWER },
+          SALES_OFFICE: { value: SALES_OFFICE },
+          FARM: { value: FARM },
+          FIELD: { value: FIELD },
+          MANAGEMENT_ZONES: { value: MANAGEMENT_ZONES },
+        },
+      }),
     },
     token: {
       type: GraphQLString,

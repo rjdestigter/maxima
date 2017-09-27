@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import redis from '../redis';
+import getUrl from '../utils/url';
 
 export async function store(user, token) {
   await Promise.all([
@@ -31,7 +32,7 @@ export async function local({ token }) {
 
 export async function server({ token }) {
   try {
-    const request = fetch('https://dev.granduke.net/client/currentuser/', {
+    const request = fetch(getUrl({ path: 'client/currentuser/' }), {
       method: 'GET',
       headers: {
         Authorization: `${token}`,
@@ -42,9 +43,12 @@ export async function server({ token }) {
     const response = await request;
     const user = await response.json();
 
-    await store(user, token);
+    if (response.status >= 200 && response.status < 300) {
+      await store(user, token);
+      return user;
+    }
 
-    return user;
+    return null;
   } catch (error) {
     console.log(error);
   }
@@ -57,10 +61,14 @@ export async function storePermissions({ permissions, user }) {
     permissions.map(async permission => {
       const { id, asset, perm } = permission;
 
-      await redis.saddAsync('perm', id);
-      await redis.saddAsync(`perm:${user.id}`, id);
+      redis.sadd('perm', id);
+      redis.sadd(`perm:user:${user.id}`, id);
 
-      return redis.hmsetAsync(`perm:${id}`, [
+      if (perm.ASSET_READ) {
+        redis.sadd(`perm:asset:read:${user.id}`, asset.id);
+      }
+
+      return redis.hmset(`perm:${id}`, [
         'id',
         id || '',
         'asset',
@@ -75,7 +83,10 @@ export async function storePermissions({ permissions, user }) {
 export async function getPermissions({ user, token }) {
   try {
     const request = fetch(
-      'https://dev.granduke.net/permission/' + `?clientID=${user.id}&assetID=1`,
+      getUrl({
+        path: 'permission/',
+        queryParams: { clientID: user.id },
+      }),
       {
         method: 'GET',
         headers: {
