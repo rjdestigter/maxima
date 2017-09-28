@@ -93,28 +93,36 @@ async function getLayer(layerId) {
 }
 
 export async function local(user, { rootAsset, season }) {
-  if (!user) {
-    throw 'No user provided';
-  }
-
-  const keyToPermittedIds = await getKeyToPermittedIds(user);
-
-  const assetIds = await redis.sinterAsync(
-    keyToPermittedIds,
-    `season:${season}`,
-    `decendants:${rootAsset}`,
-  );
-
-  const layerIdsByAssetIdSetKeys = _.map(assetIds, id => `layers:asset:${id}`);
-  const layerIds = await redis.sunionAsync(...layerIdsByAssetIdSetKeys);
-
-  if (layerIds && layerIds.length) {
-    try {
-      const list = await Promise.all(layerIds.map(getLayer));
-      return list.filter(layer => layer);
-    } catch (error) {
-      return [];
+  try {
+    if (!user) {
+      throw 'No user provided';
     }
+
+    const keyToPermittedIds = await getKeyToPermittedIds(user, 'layer');
+
+    const assetIds = await redis.sinterAsync(
+      keyToPermittedIds,
+      `season:${season}`,
+      `decendants:${rootAsset}`,
+    );
+
+    const layerIdsByAssetIdSetKeys = _.map(assetIds, id => `layers:asset:${id}`);
+    const layerIds = await redis.sunionAsync(...layerIdsByAssetIdSetKeys);
+
+    if (layerIds && layerIds.length) {
+      try {
+        const list = await Promise.all(layerIds.map(getLayer));
+        return list.filter(layer => layer);
+      } catch (error) {
+        return [];
+      }
+    }
+  } catch (error) {
+    console.log('---------------------------------')
+    console.log('Error resolving local Layers')
+    console.log('---------------------------------')
+    console.error(error)
+    console.log('---------------------------------')
   }
 
   return [];

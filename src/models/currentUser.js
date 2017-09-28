@@ -68,6 +68,10 @@ export async function storePermissions({ permissions, user }) {
         redis.sadd(`perm:asset:read:${user.id}`, asset.id);
       }
 
+      if (perm.LAYER_READ) {
+        redis.sadd(`perm:layer:read:${user.id}`, asset.id);
+      }
+
       return redis.hmset(`perm:${id}`, [
         'id',
         id || '',

@@ -16,6 +16,16 @@ const GROWER = 'Grower';
 const SALES_OFFICE = 'Sales Office';
 const FARM = 'Farm';
 
+let i = 1;
+
+function debug(...args) {
+  console.log('-----------I-----------');
+  console.log(i, ...args);
+  console.log('-----------I-----------');
+  console.log(`\n`);
+  i += 1;
+}
+
 /**
  * getShape Promises a shape model if it can find it.
  * @param  {!number} shapeId Id of the shape model
@@ -99,55 +109,49 @@ export async function rebuildIndexes() {
 
   try {
     // Rebuild ancestry index
-    console.log('Rebuild indexes.');
+    debug('Rebuild indexes.');
     const { ancestors, decendants } = buildAncestorsIndex(assetsById, 'id');
-    console.log('Indexes rebuilt.');
+    debug('Indexes rebuilt.');
 
     _.forEach(ancestors, (ancestorIds, assetId) => {
       if (_.size(ancestorIds))
         redis.sadd(`ancestors:${assetId}`, ...ancestorIds);
     });
 
-    console.log('Ancestry Indexes stored in cache.');
+    debug('Ancestry Indexes stored in cache.');
 
     _.forEach(decendants, (decendantIds, assetId) => {
       if (_.size(decendantIds))
         redis.sadd(`decendants:${assetId}`, ...decendantIds);
     });
 
-    console.log('Decendants Indexes stored in cache.');
+    debug('Decendants Indexes stored in cache.');
   } catch (error) {
-    console.error(error);
+    debug(error);
   }
-
-  // Rebuild decendants index
-  // const decendants = _.reduce(ancestors, (ancestorIds, assetId))
-  // console.log('Decendants rebuilt.');
-  //
-  // _.forEach(decendants, (decendantIds, assetId) => {
-  //   _.forEach(decendantIds, decendantId => {
-  //     redis.sadd(`decendants:${assetId}`, decendantId);
-  //   });
-  // });
-
-  // console.log('Decendants stored in cache.');
 }
 
-export async function getKeyToPermittedIds(user) {
+export async function getKeyToPermittedIds(user, read = 'asset') {
+  debug('getKeyToPermittedIds', read);
   const tempKey = `temp1:${user.id}:${Math.random()}`;
 
   // List of all assetIds attached to permissions that have asset read.
   const permittedRootIds = await redis.smembersAsync(
-    `perm:asset:read:${user.id}`,
+    `perm:${read}:read:${user.id}`,
   );
-  // List of keys linking to each set of decendants for each assetId with read permission.
-  const permittedSetKeys = _.map(permittedRootIds, id => `decendants:${id}`);
 
-  // Store a temporary union of all asset ids the user has access too.
-  await redis.sunionstoreAsync(tempKey, ...permittedSetKeys);
-  await redis.saddAsync(tempKey, ...permittedRootIds);
+  if (permittedRootIds.length) {
+    // List of keys linking to each set of decendants for each assetId with read permission.
+    const permittedSetKeys = _.map(permittedRootIds, id => `decendants:${id}`);
 
-  return tempKey;
+    // Store a temporary union of all asset ids the user has access too.
+    await redis.sunionstoreAsync(tempKey, ...permittedSetKeys);
+    await redis.saddAsync(tempKey, ...permittedRootIds);
+    debug('getKeyToPermittedIds', tempKey);
+    return tempKey;
+  }
+
+  return null;
 }
 
 /**
@@ -157,15 +161,18 @@ export async function getKeyToPermittedIds(user) {
  * @return {Promise.<>}        void
  */
 export async function store(data, { season }) {
-  data.forEach(asset => {
+  debug('Storing assets');
+
+  const promises = data.map(async asset => {
     // Destructure asset attributes
+    const currentPromises = [];
     const { id, label, parent, category, shape } = asset;
 
     // Add the assetId to the set of assetIds in redis
-    redis.sadd('assets', id);
+    currentPromises.push(redis.saddAsync('assets', id));
 
     // Add the assetId to the set of assetIds by category in redis
-    if (category) redis.sadd(category, id);
+    if (category) currentPromises.push(redis.saddAsync(category, id));
 
     // Add the assetId to the set of assetIds by seasonId in redis
     // if the asset is a seasonal asset.
@@ -181,37 +188,45 @@ export async function store(data, { season }) {
         FARM,
       ].indexOf(category) < 0
     ) {
-      redis.sadd(`season:${season}`, id);
+      currentPromises.push(redis.saddAsync(`season:${season}`, id));
     }
 
     // Store the asset in redis
-    redis.hmset(`asset:${id}`, [
-      'id',
-      id || '',
-      'label',
-      label || '',
-      'parent',
-      parent || '',
-      'category',
-      category || '',
-      'shape',
-      (shape && shape.id) || '',
-    ]);
+    currentPromises.push(
+      redis.hmsetAsync(`asset:${id}`, [
+        'id',
+        id || '',
+        'label',
+        label || '',
+        'parent',
+        parent || '',
+        'category',
+        category || '',
+        'shape',
+        (shape && shape.id) || '',
+      ]),
+    );
 
     // Store the shape in redis if it was received as well
     if (shape) {
       // Add the shapeId to the set of shapeIds in redis
-      redis.sadd('shapes', shape.id);
 
-      // Store the shape
-      redis.hmset(`shape:${shape.id}`, [
-        'id',
-        shape.id,
-        'shapeData',
-        shape.shapeData,
-      ]);
+      currentPromises.push(
+        redis.saddAsync('shapes', shape.id),
+        // Store the shape
+        redis.hmsetAsync(`shape:${shape.id}`, [
+          'id',
+          shape.id,
+          'shapeData',
+          shape.shapeData,
+        ]),
+      );
     }
+
+    return Promise.all(currentPromises);
   });
+
+  await Promise.all(promises);
 
   const rebuild = await redis.getAsync('rebuild:index');
 
@@ -219,7 +234,7 @@ export async function store(data, { season }) {
     return;
   }
 
-  rebuildIndexes();
+  await rebuildIndexes();
 }
 
 /**
@@ -236,53 +251,57 @@ export async function local(
   user,
   { rootAsset, season, toFarmsOnly, category },
 ) {
-  if (!user && user.id) {
-    throw Error('No user provided');
-  }
-
-  const tempKey1 = `temp1:${user.id}:${Math.random()}`;
-  const tempKey2 = await getKeyToPermittedIds(user);
-  let assetIds;
-  if (toFarmsOnly) {
-    // Union of the sets of all non-seasonal assetIds by category
-    await redis.sunionstoreAsync(
-      tempKey1,
-      REGION,
-      HUB,
-      TERRITORY,
-      REPRESENTATIVE,
-      GROWER,
-      SALES_OFFICE,
-      FARM,
-    );
-
-    // Assets to be returned are an intersection of the list of assetIds
-    // that are non-seasonal and the user has access too.
-    assetIds = await redis.sinterAsync(tempKey2, tempKey1);
-  } else if (category) {
-    assetIds = await redis.sinterAsync(tempKey2, category);
-  } else if (rootAsset && season) {
-    assetIds = await redis.sinterAsync(
-      tempKey2,
-      `season:${season}`,
-      `decendants:${rootAsset}`,
-    );
-  } else {
-    assetIds = await redis.sinterAsync(tempKey2, 'assets');
-  }
-
-  redis.del(tempKey1, tempKey2);
-
-  if (assetIds) {
-    try {
-      const list = await Promise.all(assetIds.map(getAsset));
-      return list.filter(asset => asset);
-    } catch (error) {
-      return [];
+  try {
+    if (!user && user.id) {
+      throw Error('No user provided');
     }
+
+    const tempKey1 = `temp1:${user.id}:${Math.random()}`;
+    const tempKey2 = await getKeyToPermittedIds(user);
+
+    if (tempKey2) {
+      let assetIds;
+      if (toFarmsOnly) {
+        // Union of the sets of all non-seasonal assetIds by category
+        await redis.sunionstoreAsync(
+          tempKey1,
+          REGION,
+          HUB,
+          TERRITORY,
+          REPRESENTATIVE,
+          GROWER,
+          SALES_OFFICE,
+          FARM,
+        );
+
+        // Assets to be returned are an intersection of the list of assetIds
+        // that are non-seasonal and the user has access too.
+        assetIds = await redis.sinterAsync(tempKey2, tempKey1);
+      } else if (category) {
+        assetIds = await redis.sinterAsync(tempKey2, category);
+      } else if (rootAsset && season) {
+        assetIds = await redis.sinterAsync(
+          tempKey2,
+          `season:${season}`,
+          `decendants:${rootAsset}`,
+        );
+      } else {
+        assetIds = await redis.sinterAsync(tempKey2, 'assets');
+      }
+
+      redis.del(tempKey1, tempKey2);
+
+      if (assetIds) {
+        const list = await Promise.all(assetIds.map(getAsset));
+        return [list.filter(asset => asset), Promise.resolve(true)];
+      }
+    }
+  } catch (error) {
+    debug('Error resolving local Assets');
+    debug(error);
   }
 
-  return [];
+  return [[], Promise.resolve(true)];
 }
 
 /**
@@ -315,10 +334,7 @@ export async function server({
     },
   });
 
-  console.log('-----------');
-  console.log('Fetching from server at');
-  console.log(url);
-  console.log('-----------');
+  debug('Fetching', url);
 
   try {
     // Request the data from the server
@@ -340,18 +356,19 @@ export async function server({
       const json = JSON.parse(text);
 
       // Store the assets in cache if any were received
-      if (_.size(json)) store(json, { season });
-
-      // Return the list of assets
-      return json;
+      if (_.size(json)) {
+        debug('Received Assets', json.length);
+        return [json, store(json, { season })];
+      }
+    } else {
+      const text = await response.text();
+      debug('400 Assets', text);
     }
-    const text = await response.text();
-    console.error(text);
   } catch (error) {
-    console.log(error);
+    debug('500 Assets', error);
   }
 
-  return [];
+  return [[], Promise.resolve(true)];
 }
 
 /**
@@ -387,7 +404,7 @@ export async function assets(
   // If the call has been made before, try fetching locally stored data
   if (localOnly || fetchedBySeasonAndAsset) {
     localPromise = new Promise(async resolve => {
-      const data = await local(user, {
+      const [data] = await local(user, {
         token,
         rootAsset,
         season,
@@ -395,18 +412,19 @@ export async function assets(
         toFarmsOnly,
         category,
       });
+
       if (data.length) {
-        console.log('Resolved local', rootAsset, season, category, toFarmsOnly);
-        resolve(data);
         console.log(
-          'Resolved local only',
-          rootAsset,
-          season,
-          category,
-          toFarmsOnly,
+          'Resolved local',
+          `rootAsset: ${rootAsset}`,
+          `season: ${season}`,
+          `category: ${category}`,
+          `toFarmsOnly: ${toFarmsOnly}`,
         );
+
+        resolve([data, Promise.resolve(true)]);
       } else if (localOnly) {
-        resolve([]);
+        resolve([[], Promise.resolve(true)]);
       }
     });
   } else {
@@ -428,20 +446,31 @@ export async function assets(
         toFarmsOnly,
         category,
       });
-      console.log('Resolved server', rootAsset, season, category, toFarmsOnly);
+      debug(
+        'Resolved server',
+        `rootAsset: ${rootAsset}`,
+        `season: ${season}`,
+        `category: ${category}`,
+        `toFarmsOnly: ${toFarmsOnly}`,
+      );
       serverResolved = true;
       resolve(result);
     });
 
   // Wait for local or server to resolve
 
-  const response = await Promise.race(
+  const [response, storePromise] = await Promise.race(
     [serverPromise, localPromise].filter(p => p),
   );
 
+  debug('Assets Resolved', serverResolved)
+
   if (toFarmsOnly && serverResolved) {
-    console.log('toFarmsOnly resolved, returning local');
-    return await assets(...arguments, true);
+    debug('toFarmsOnly resolved, returning local');
+
+    await storePromise;
+
+    return assets(...arguments, true);
   }
 
   return response;
