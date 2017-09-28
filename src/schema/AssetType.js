@@ -16,6 +16,8 @@ import {
   GraphQLString,
 } from 'graphql';
 
+import FieldInfoType from './FieldInfoType';
+
 export const ShapeType = new GraphQLObjectType({
   name: 'Shape',
 
@@ -35,5 +37,6 @@ export default new GraphQLObjectType({
     category: { type: new GraphQLNonNull(GraphQLString) },
     parent: { type: GraphQLInt },
     shape: { type: ShapeType },
+    field_info: { type: FieldInfoType },
   },
 });

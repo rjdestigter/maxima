@@ -37,7 +37,6 @@ const MANAGEMENT_ZONES = 'Management Zones';
 
 export const assets = {
   type: new GraphQLList(AssetType),
-  // args: forwardConnectionArgs,
   args: {
     rootAsset: {
       type: GraphQLInt,

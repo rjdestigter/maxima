@@ -19,11 +19,80 @@ const FARM = 'Farm';
 let i = 1;
 
 function debug(...args) {
-  console.log('-----------I-----------');
+  console.log(
+    '------------------------------------------------------------------',
+  );
   console.log(i, ...args);
-  console.log('-----------I-----------');
+  console.log(
+    '------------------------------------------------------------------',
+  );
   console.log(`\n`);
   i += 1;
+}
+
+function decode(object, nullable = null) {
+  return (attr, objectKey = 'id') => {
+    const value = object[attr];
+
+    if (value == null) {
+      return null;
+    } else if (typeof value === 'boolean') {
+      return value ? 1 : 0;
+    } else if (typeof value === 'object') {
+      return value[objectKey] || nullable;
+    } else if (typeof value === 'string') {
+      return value;
+    } else if (typeof value === 'number') {
+      return value;
+    }
+
+    return nullable;
+  };
+}
+
+function decodeFieldInfo(fieldInfo, nullable = null) {
+  if (!fieldInfo) return null;
+
+  const decoder = decode(fieldInfo, nullable);
+  return {
+    id: decoder('id'),
+    field: decoder('field'),
+    season: decoder('season'),
+    LLD: decoder('LLD'),
+    previous_crop: decoder('previous_crop'),
+    previous_variety: decoder('previous_variety'),
+    tillage: decoder('tillage'),
+    current_crop: decoder('current_crop'),
+    current_variety: decoder('current_variety'),
+    yield_target: decoder('yield_target'),
+    yield_target_units: decoder('yield_target_units'),
+    field_area_units: decoder('field_area_units'),
+    acres: decoder('acres'),
+    dsm_required: decoder('dsm_required'),
+    owned: decoder('owned'),
+    seeding_date: decoder('seeding_date'),
+    seeding_depth: decoder('seeding_depth'),
+    row_spacing: decoder('row_spacing'),
+    irrigated: decoder('irrigated'),
+    continuous_cropping: decoder('continuous_cropping'),
+    straw_removed: decoder('straw_removed'),
+    date_harvested: decoder('date_harvested'),
+    date_yield_processed: decoder('date_yield_processed'),
+  };
+}
+
+function decodeAsset(asset, nullable = null) {
+  if (!asset) return null;
+
+  const decoder = decode(asset, nullable);
+  return {
+    id: decoder('id'),
+    label: decoder('label'),
+    category: decoder('category', 'name'),
+    shape: asset.shape || null,
+    parent: decoder('parent'),
+    field_info: decodeFieldInfo(asset.field_info),
+  };
 }
 
 /**
@@ -59,12 +128,17 @@ async function getShape(shapeId) {
 /**
  * getAsset Promises an asset model if it can find it.
  * @param  {!number} assetId Id of the asset model
- * @return {Promise.<?Object?>}         The asset model or null if it is not able to find it.
+ * @return {Promise.<?Object>}         The asset model or null if it is not able to find it.
  */
 async function getAsset(assetId) {
-  const { id, label, parent, category, shape } = await redis.hgetallAsync(
-    `asset:${assetId}`,
-  );
+  const {
+    id,
+    label,
+    parent,
+    category,
+    shape,
+    field_info,
+  } = await redis.hgetallAsync(`asset:${assetId}`);
 
   return {
     id: Number(id) || null,
@@ -72,6 +146,7 @@ async function getAsset(assetId) {
     parent: Number(parent) || null,
     category,
     shape: await getShape(shape),
+    field_info: (field_info && JSON.parse(field_info)) || null,
   };
 }
 
@@ -167,6 +242,7 @@ export async function store(data, { season }) {
     // Destructure asset attributes
     const currentPromises = [];
     const { id, label, parent, category, shape } = asset;
+    const field_info = decodeFieldInfo(asset.field_info);
 
     // Add the assetId to the set of assetIds in redis
     currentPromises.push(redis.saddAsync('assets', id));
@@ -201,9 +277,11 @@ export async function store(data, { season }) {
         'parent',
         parent || '',
         'category',
-        category || '',
+        (category && category.name) || category || '',
         'shape',
         (shape && shape.id) || '',
+        'field_info',
+        (field_info && JSON.stringify(field_info)) || '',
       ]),
     );
 
@@ -323,8 +401,10 @@ export async function server({
   category,
 }) {
   // Build the user given possible query parameters
+  const path = rootAsset || season ? 'asset/field/' : 'asset/';
+
   const url = getUrl({
-    path: 'asset/',
+    path,
     queryParams: {
       rootAsset,
       season,
@@ -358,7 +438,8 @@ export async function server({
       // Store the assets in cache if any were received
       if (_.size(json)) {
         debug('Received Assets', json.length);
-        return [json, store(json, { season })];
+        const decoded = _.map(json, asset => decodeAsset(asset));
+        return [decoded, store(decoded, { season })];
       }
     } else {
       const text = await response.text();
@@ -463,7 +544,7 @@ export async function assets(
     [serverPromise, localPromise].filter(p => p),
   );
 
-  debug('Assets Resolved', serverResolved)
+  debug('Assets Resolved', serverResolved);
 
   if (toFarmsOnly && serverResolved) {
     debug('toFarmsOnly resolved, returning local');

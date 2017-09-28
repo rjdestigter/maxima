@@ -11,7 +11,7 @@ services:
     depends_on:
       - redis
     environment:
-      - CORS_ORIGIN=http://192.168.1.76:3000,http://10.55.0.184:8050,http://localhost:3000,http://localhost:3001
+      - CORS_ORIGIN=http://10.55.0.184:6001,http://192.168.1.76:3000,http://10.55.0.184:8050,http://localhost:3000,http://localhost:3001
       - REDIS_URL=redis://redis:6379/0
       - SESSION_SECRET=wZjwhFtzQsd7r87W6AZw45Sm
     ports:
