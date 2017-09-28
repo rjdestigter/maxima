@@ -7,7 +7,6 @@ import { spawn } from 'threads';
 
 import getUrl from '../utils/url';
 import buildAncestorsIndex from '../utils/buildAncestorsIndex';
-import buildDecendantsIndex from '../utils/buildDecendantsIndex';
 
 const REGION = 'Region';
 const HUB = 'Hub';
@@ -105,18 +104,20 @@ export async function rebuildIndexes() {
     console.log('Indexes rebuilt.');
 
     _.forEach(ancestors, (ancestorIds, assetId) => {
-      redis.sadd(`ancestors:${assetId}`, ...ancestorIds);
+      if (_.size(ancestorIds))
+        redis.sadd(`ancestors:${assetId}`, ...ancestorIds);
     });
 
     console.log('Ancestry Indexes stored in cache.');
 
     _.forEach(decendants, (decendantIds, assetId) => {
-      redis.sadd(`decendants:${assetId}`, ...decendantIds);
+      if (_.size(decendantIds))
+        redis.sadd(`decendants:${assetId}`, ...decendantIds);
     });
 
     console.log('Decendants Indexes stored in cache.');
   } catch (error) {
-    console.error(error)
+    console.error(error);
   }
 
   // Rebuild decendants index
@@ -130,6 +131,23 @@ export async function rebuildIndexes() {
   // });
 
   // console.log('Decendants stored in cache.');
+}
+
+export async function getKeyToPermittedIds(user) {
+  const tempKey = `temp1:${user.id}:${Math.random()}`;
+
+  // List of all assetIds attached to permissions that have asset read.
+  const permittedRootIds = await redis.smembersAsync(
+    `perm:asset:read:${user.id}`,
+  );
+  // List of keys linking to each set of decendants for each assetId with read permission.
+  const permittedSetKeys = _.map(permittedRootIds, id => `decendants:${id}`);
+
+  // Store a temporary union of all asset ids the user has access too.
+  await redis.sunionstoreAsync(tempKey, ...permittedSetKeys);
+  await redis.saddAsync(tempKey, ...permittedRootIds);
+
+  return tempKey;
 }
 
 /**
@@ -216,27 +234,15 @@ export async function store(data, { season }) {
  */
 export async function local(
   user,
-  { rootAsset, season, shape, toFarmsOnly, category },
+  { rootAsset, season, toFarmsOnly, category },
 ) {
   if (!user && user.id) {
     throw Error('No user provided');
   }
 
   const tempKey1 = `temp1:${user.id}:${Math.random()}`;
-  const tempKey2 = `temp2:${user.id}:${Math.random()}`;
+  const tempKey2 = await getKeyToPermittedIds(user);
   let assetIds;
-
-  // List of all assetIds attached to permissions that have asset read.
-  const permittedRootIds = await redis.smembersAsync(
-    `perm:asset:read:${user.id}`,
-  );
-  // List of keys linking to each set of decendants for each assetId with read permission.
-  const permittedSetKeys = _.map(permittedRootIds, id => `decendants:${id}`);
-
-  // Store a temporary union of all asset ids the user has access too.
-  await redis.sunionstoreAsync(tempKey2, ...permittedSetKeys);
-  await redis.saddAsync(tempKey2, ...permittedRootIds);
-
   if (toFarmsOnly) {
     // Union of the sets of all non-seasonal assetIds by category
     await redis.sunionstoreAsync(
@@ -303,7 +309,7 @@ export async function server({
     queryParams: {
       rootAsset,
       season,
-      shape,
+      shape: true,
       toFarmsOnly,
       category,
     },
@@ -319,7 +325,9 @@ export async function server({
     const request = fetch(url, {
       method: 'GET',
       headers: {
-        Authorization: `${token}`,
+        Authorization: `${toFarmsOnly
+          ? 'Token 0d7d912d9e71f061372bfaa5e2cc670ff2b232c6'
+          : token}`,
         'Content-Type': 'application/json',
       },
     });
@@ -356,14 +364,10 @@ export async function server({
  * @param  {?string} options.category Filter by category
  * @return {Promise.<Array.<Object>>} List of assets returned from the redis cache
  */
-export async function assets({
-  token,
-  rootAsset,
-  season,
-  shape,
-  toFarmsOnly,
-  category,
-}) {
+export async function assets(
+  { token, rootAsset, season, shape, toFarmsOnly, category },
+  localOnly = false,
+) {
   if (!token) {
     throw Error('No token provided');
   }
@@ -373,7 +377,7 @@ export async function assets({
 
   // If filtering by rootAsset and season, determine whether this call has
   // been made before. If not, skip fetching from local cache.
-  const fetched =
+  const fetchedBySeasonAndAsset =
     season && rootAsset
       ? await redis.existsAsync(`f:${rootAsset}:${season}`)
       : true;
@@ -381,7 +385,7 @@ export async function assets({
   let localPromise;
 
   // If the call has been made before, try fetching locally stored data
-  if (fetched) {
+  if (localOnly || fetchedBySeasonAndAsset) {
     localPromise = new Promise(async resolve => {
       const data = await local(user, {
         token,
@@ -394,6 +398,15 @@ export async function assets({
       if (data.length) {
         console.log('Resolved local', rootAsset, season, category, toFarmsOnly);
         resolve(data);
+        console.log(
+          'Resolved local only',
+          rootAsset,
+          season,
+          category,
+          toFarmsOnly,
+        );
+      } else if (localOnly) {
+        resolve([]);
       }
     });
   } else {
@@ -401,20 +414,35 @@ export async function assets({
     redis.incr(`f:${rootAsset}:${season}`);
   }
 
+  let serverResolved = false;
+
   // Fetch data from backend server with provided query params
-  const serverPromise = new Promise(async resolve => {
-    const result = await server({
-      token,
-      rootAsset,
-      season,
-      shape,
-      toFarmsOnly,
-      category,
+  const serverPromise =
+    !localOnly &&
+    new Promise(async resolve => {
+      const result = await server({
+        token,
+        rootAsset,
+        season,
+        shape,
+        toFarmsOnly,
+        category,
+      });
+      console.log('Resolved server', rootAsset, season, category, toFarmsOnly);
+      serverResolved = true;
+      resolve(result);
     });
-    console.log('Resolved server', rootAsset, season, category, toFarmsOnly);
-    resolve(result);
-  });
 
   // Wait for local or server to resolve
-  return Promise.race([serverPromise, localPromise].filter(p => p));
+
+  const response = await Promise.race(
+    [serverPromise, localPromise].filter(p => p),
+  );
+
+  if (toFarmsOnly && serverResolved) {
+    console.log('toFarmsOnly resolved, returning local');
+    return await assets(...arguments, true);
+  }
+
+  return response;
 }

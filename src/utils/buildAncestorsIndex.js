@@ -6,19 +6,27 @@ import getAncestors from './getAncestors';
 
 // Exports
 export default function buildAncestorsIndex(assets) {
-  return _.reduce(
+  const ancestors = _.reduce(
     assets,
     (acc, asset) => {
       const ancestorIds = _.map(getAncestors(assets, asset.id), 'id');
-      acc.ancestors[asset.id] = ancestorIds;
-
-      _.forEach(ancestorIds, id => {
-        acc.decendants[id] = acc.decendants[id] || [];
-        acc.decendants[id].push(asset.id);
-      });
-
+      acc[asset.id] = ancestorIds;
       return acc;
     },
-    { ancestors: {}, decendants: {} },
+    {},
   );
+
+  const decendants = _.reduce(
+    ancestors,
+    (acc, ancestorIds, childId) => {
+      _.forEach(ancestorIds, id => {
+        acc[id] = acc[id] || [];
+        acc[id].push(childId);
+      });
+      return acc;
+    },
+    {},
+  );
+
+  return { ancestors, decendants };
 }
