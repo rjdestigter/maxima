@@ -401,8 +401,12 @@ export async function server({
   category,
 }) {
   // Build the user given possible query parameters
+  // If filtering by rootAsset and season, we'll call /asset/field
+  // In the future we'll make 2 calls, one to /asset/subfield as well
+  // So that the UI doesn't have to make 3 calls for one data set
   const path = rootAsset || season ? 'asset/field/' : 'asset/';
 
+  // Get the proper url for this call
   const url = getUrl({
     path,
     queryParams: {
@@ -421,6 +425,9 @@ export async function server({
     const request = fetch(url, {
       method: 'GET',
       headers: {
+        // If toFarmsOnly=true then use the super-user token
+        // Other wise use the users token that was included in the request
+        // headers
         Authorization: `${toFarmsOnly
           ? 'Token 0d7d912d9e71f061372bfaa5e2cc670ff2b232c6'
           : token}`,
@@ -428,8 +435,10 @@ export async function server({
       },
     });
 
+    // Await the server response
     const response = await request;
 
+    // If the response status indicates success
     if (response.status >= 200 && response.status < 300) {
       const text = await response.text();
 
@@ -438,17 +447,24 @@ export async function server({
       // Store the assets in cache if any were received
       if (_.size(json)) {
         debug('Received Assets', json.length);
+        // Map the assets + possible field_info's to redis and UI
+        // supported formats
         const decoded = _.map(json, asset => decodeAsset(asset));
         return [decoded, store(decoded, { season })];
       }
     } else {
+      // If the response status indicates something went wrong
       const text = await response.text();
+      throw Error(text);
       debug('400 Assets', text);
     }
   } catch (error) {
+    // If something in the code went horribly wrong
+    throw Error(error);
     debug('500 Assets', error);
   }
 
+  // Shoud never be reached
   return [[], Promise.resolve(true)];
 }
 
@@ -471,10 +487,16 @@ export async function assets(
   }
 
   // Assure the user was logged in and authenticated
+  // If not, currentUser will fetch it from the backend
+  // using the token as well as any asset permission records
+  // for this user
   const user = await currentUser({ token });
 
   // If filtering by rootAsset and season, determine whether this call has
   // been made before. If not, skip fetching from local cache.
+  // This prevents the local call from resolving with only a few assets
+  // if they were already in the cache vs. resolving with all the assets
+  // belonging to the selected rootAsset and season the server will give.
   const fetchedBySeasonAndAsset =
     season && rootAsset
       ? await redis.existsAsync(`f:${rootAsset}:${season}`)
@@ -483,8 +505,16 @@ export async function assets(
   let localPromise;
 
   // If the call has been made before, try fetching locally stored data
+  // localOnly is used when grower users are the first to call toFarmsOnly
+  // If toFarmsOnly resolves locally (cache) with no assets, it will Wait
+  // for the server call to resolve for toFarmsOnly. This specific call is made
+  // Using a super user though and so we don't want to return the server response
+  // since the user might not have access to it. After the server response
+  // we recursively call this function but tell it to resolve locally
+  // Again, this only applies if toFarmsOnly does not resolve any assets
   if (localOnly || fetchedBySeasonAndAsset) {
     localPromise = new Promise(async resolve => {
+      // Await results from cache for this call
       const [data] = await local(user, {
         token,
         rootAsset,
@@ -494,6 +524,10 @@ export async function assets(
         category,
       });
 
+      // Only resolve the "local" promise if assets were returned
+      // Other wise, don't resolve at all so that the server call
+      // will eventually resolve and be returned to the user
+      // Execpt when localOnly=true
       if (data.length) {
         console.log(
           'Resolved local',
@@ -503,19 +537,21 @@ export async function assets(
           `toFarmsOnly: ${toFarmsOnly}`,
         );
 
+        // Resolve locally received assets
         resolve([data, Promise.resolve(true)]);
       } else if (localOnly) {
         resolve([[], Promise.resolve(true)]);
       }
     });
   } else {
-    // Otherwise just mark that we have now that we will
+    // Inform redis that we have made a call to this rootAsset and season
     redis.incr(`f:${rootAsset}:${season}`);
   }
 
   let serverResolved = false;
 
   // Fetch data from backend server with provided query params
+  // Except when localOnly=true
   const serverPromise =
     !localOnly &&
     new Promise(async resolve => {
@@ -535,24 +571,31 @@ export async function assets(
         `toFarmsOnly: ${toFarmsOnly}`,
       );
       serverResolved = true;
+
+      // Resolve assets returned from the server
       resolve(result);
     });
 
   // Wait for local or server to resolve
-
+  // Both the response and a promise related to storing new data
+  // are returned. The store data promise is only important when
+  // you want to recursively call this function with localOnly=true
   const [response, storePromise] = await Promise.race(
     [serverPromise, localPromise].filter(p => p),
   );
 
   debug('Assets Resolved', serverResolved);
 
+  // If the server resolved and the call was for toFarmsOnly
   if (toFarmsOnly && serverResolved) {
     debug('toFarmsOnly resolved, returning local');
-
+    // Wait till redish finishes storing the received toFarmsOnly assets
     await storePromise;
 
+    // Recursively call this function with localOnly=true
     return assets(...arguments, true);
   }
 
+  // Other wise, return whatever resolved first
   return response;
 }
